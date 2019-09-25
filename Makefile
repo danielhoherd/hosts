@@ -20,4 +20,4 @@ generate-hosts-file:
 
 .PHONY: install-hosts-file
 install-hosts-file:
-	. venv/bin/activate && python3 updateHostsFile.py
+	. venv/bin/activate && python3 updateHostsFile.py --auto --replace
