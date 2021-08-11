@@ -4,7 +4,7 @@
 # https://github.com/l1m5
 #
 # This Python script will combine all the host files you provide
-# as sources into one, unique host file to keep you internet browsing happy.
+# as sources into one, unique host file to keep your internet browsing happy.
 
 import argparse
 import fnmatch
@@ -20,17 +20,23 @@ import sys
 import tempfile
 import time
 from glob import glob
-
-import lxml  # noqa: F401
-from bs4 import BeautifulSoup
+from typing import Optional, Tuple
 
 # Detecting Python 3 for version-dependent implementations
 PY3 = sys.version_info >= (3, 0)
 
-if PY3:
-    from urllib.request import urlopen
-else:
+if not PY3:
     raise Exception("We do not support Python 2 anymore.")
+
+
+try:
+    import requests
+except ImportError:
+    raise ImportError(
+        "This project's dependencies have changed. The Requests library ("
+        "https://requests.readthedocs.io/en/master/) is now required."
+    )
+
 
 # Syntactic sugar for "sudo" command in UNIX / Linux
 if platform.system() == "OpenBSD":
@@ -75,7 +81,7 @@ def get_defaults():
         "readmedata": {},
         "readmedatafilename": path_join_robust(BASEDIR_PATH, "readmeData.json"),
         "exclusionpattern": r"([a-zA-Z\d-]+\.){0,}",
-        "exclusionregexs": [],
+        "exclusionregexes": [],
         "exclusions": [],
         "commonexclusions": ["hulu.com"],
         "blacklistfile": path_join_robust(BASEDIR_PATH, "blacklist"),
@@ -89,8 +95,7 @@ def get_defaults():
 def main():
     parser = argparse.ArgumentParser(
         description="Creates a unified hosts "
-        "file from hosts stored in "
-        "data subfolders."
+        "file from hosts stored in the data subfolders."
     )
     parser.add_argument(
         "--auto",
@@ -106,7 +111,7 @@ def main():
         dest="backup",
         default=False,
         action="store_true",
-        help="Backup the hosts " "files before they " "are overridden.",
+        help="Backup the hosts files before they are overridden.",
     )
     parser.add_argument(
         "--extensions",
@@ -114,7 +119,7 @@ def main():
         dest="extensions",
         default=[],
         nargs="*",
-        help="Host extensions to include " "in the final hosts file.",
+        help="Host extensions to include in the final hosts file.",
     )
     parser.add_argument(
         "--ip",
@@ -137,7 +142,7 @@ def main():
         dest="noupdate",
         default=False,
         action="store_true",
-        help="Don't update from " "host data sources.",
+        help="Don't update from host data sources.",
     )
     parser.add_argument(
         "--skipstatichosts",
@@ -145,7 +150,15 @@ def main():
         dest="skipstatichosts",
         default=False,
         action="store_true",
-        help="Skip static localhost entries " "in the final hosts file.",
+        help="Skip static localhost entries in the final hosts file.",
+    )
+    parser.add_argument(
+        "--nogendata",
+        "-g",
+        dest="nogendata",
+        default=False,
+        action="store_true",
+        help="Skip generation of readmeData.json",
     )
     parser.add_argument(
         "--output",
@@ -160,7 +173,7 @@ def main():
         dest="replace",
         default=False,
         action="store_true",
-        help="Replace your active " "hosts file with this " "new hosts file.",
+        help="Replace your active hosts file with this new hosts file.",
     )
     parser.add_argument(
         "--flush-dns-cache",
@@ -168,7 +181,7 @@ def main():
         dest="flushdnscache",
         default=False,
         action="store_true",
-        help="Attempt to flush DNS cache " "after replacing the hosts file.",
+        help="Attempt to flush DNS cache after replacing the hosts file.",
     )
     parser.add_argument(
         "--compress",
@@ -176,12 +189,9 @@ def main():
         dest="compress",
         default=False,
         action="store_true",
-        help="Compress the hosts file "
-        "ignoring non-necessary lines "
-        "(empty lines and comments) and "
-        "putting multiple domains in "
-        "each line. Improve the "
-        "performances under Windows.",
+        help="Compress the hosts file ignoring non-necessary lines "
+        "(empty lines and comments) and putting multiple domains in "
+        "each line. Improve the performance under Windows.",
     )
     parser.add_argument(
         "--minimise",
@@ -189,9 +199,22 @@ def main():
         dest="minimise",
         default=False,
         action="store_true",
-        help="Minimise the hosts file "
-        "ignoring non-necessary lines "
+        help="Minimise the hosts file ignoring non-necessary lines "
         "(empty lines and comments).",
+    )
+    parser.add_argument(
+        "--whitelist",
+        "-w",
+        dest="whitelistfile",
+        default=path_join_robust(BASEDIR_PATH, "whitelist"),
+        help="Whitelist file to use while generating hosts files.",
+    )
+    parser.add_argument(
+        "--blacklist",
+        "-x",
+        dest="blacklistfile",
+        default=path_join_robust(BASEDIR_PATH, "blacklist"),
+        help="Blacklist file to use while generating hosts files.",
     )
 
     global settings
@@ -220,7 +243,7 @@ def main():
     )
 
     auto = settings["auto"]
-    exclusion_regexes = settings["exclusionregexs"]
+    exclusion_regexes = settings["exclusionregexes"]
     source_data_filename = settings["sourcedatafilename"]
 
     update_sources = prompt_for_update(freshen=settings["freshen"], update_auto=auto)
@@ -248,7 +271,9 @@ def main():
     )
 
     merge_file = create_initial_file()
-    remove_old_hosts_file(settings["backup"])
+    remove_old_hosts_file(
+        path_join_robust(settings["outputpath"], "hosts"), settings["backup"]
+    )
     if settings["compress"]:
         final_file = open(path_join_robust(settings["outputpath"], "hosts"), "w+b")
         compressed_file = tempfile.NamedTemporaryFile()
@@ -275,13 +300,14 @@ def main():
     )
     final_file.close()
 
-    update_readme_data(
-        settings["readmedatafilename"],
-        extensions=extensions,
-        numberofrules=number_of_rules,
-        outputsubfolder=output_subfolder,
-        sourcesdata=sources_data,
-    )
+    if not settings["nogendata"]:
+        update_readme_data(
+            settings["readmedatafilename"],
+            extensions=extensions,
+            numberofrules=number_of_rules,
+            outputsubfolder=output_subfolder,
+            sourcesdata=sources_data,
+        )
 
     print_success(
         "Success! The hosts file has been saved in folder "
@@ -449,6 +475,34 @@ def prompt_for_move(final_file, **move_params):
 # End Prompt the User
 
 
+def sort_sources(sources):
+    """
+    Sorts the sources.
+    The idea is that all Steven Black's list, file or entries
+    get on top and the rest sorted alphabetically.
+
+    Parameters
+    ----------
+    sources: list
+        The sources to sort.
+    """
+
+    result = sorted(
+        sources.copy(),
+        key=lambda x: x.lower().replace("-", "").replace("_", "").replace(" ", ""),
+    )
+
+    # Steven Black's repositories/files/lists should be on top!
+    steven_black_positions = [
+        x for x, y in enumerate(result) if "stevenblack" in y.lower()
+    ]
+
+    for index in steven_black_positions:
+        result.insert(0, result.pop(index))
+
+    return result
+
+
 # Exclusion logic
 def display_exclusion_options(common_exclusions, exclusion_pattern, exclusion_regexes):
     """
@@ -472,7 +526,7 @@ def display_exclusion_options(common_exclusions, exclusion_pattern, exclusion_re
     -------
     aug_exclusion_regexes : list
         The original list of regex patterns potentially with additional
-        patterns from domains that user chooses to exclude.
+        patterns from domains that the user chooses to exclude.
     """
 
     for exclusion_option in common_exclusions:
@@ -508,7 +562,7 @@ def gather_custom_exclusions(exclusion_pattern, exclusion_regexes):
     -------
     aug_exclusion_regexes : list
         The original list of regex patterns potentially with additional
-        patterns from domains that user chooses to exclude.
+        patterns from domains that the user chooses to exclude.
     """
 
     # We continue running this while-loop until the user
@@ -517,7 +571,7 @@ def gather_custom_exclusions(exclusion_pattern, exclusion_regexes):
         domain_prompt = "Enter the domain you want to exclude (e.g. facebook.com): "
         user_domain = input(domain_prompt)
 
-        if is_valid_domain_format(user_domain):
+        if is_valid_user_provided_domain_format(user_domain):
             exclusion_regexes = exclude_domain(
                 user_domain, exclusion_pattern, exclusion_regexes
             )
@@ -533,7 +587,7 @@ def exclude_domain(domain, exclusion_pattern, exclusion_regexes):
     """
     Exclude a domain from being blocked.
 
-    This create the domain regex by which to exclude this domain and appends
+    This creates the domain regex by which to exclude this domain and appends
     it a list of already-existing exclusion regexes.
 
     Parameters
@@ -578,7 +632,11 @@ def matches_exclusions(stripped_rule, exclusion_regexes):
         Whether or not the rule string matches a provided exclusion.
     """
 
-    stripped_domain = stripped_rule.split()[1]
+    try:
+        stripped_domain = stripped_rule.split()[1]
+    except IndexError:
+        # Example: 'example.org' instead of '0.0.0.0 example.org'
+        stripped_domain = stripped_rule
 
     for exclusionRegex in exclusion_regexes:
         if exclusionRegex.search(stripped_domain):
@@ -616,7 +674,9 @@ def update_sources_data(sources_data, **sources_params):
 
     source_data_filename = sources_params["sourcedatafilename"]
 
-    for source in recursive_glob(sources_params["datapath"], source_data_filename):
+    for source in sort_sources(
+        recursive_glob(sources_params["datapath"], source_data_filename)
+    ):
         update_file = open(source, "r", encoding="UTF-8")
         update_data = json.load(update_file)
         sources_data.append(update_data)
@@ -624,7 +684,9 @@ def update_sources_data(sources_data, **sources_params):
 
     for source in sources_params["extensions"]:
         source_dir = path_join_robust(sources_params["extensionspath"], source)
-        for update_file_path in recursive_glob(source_dir, source_data_filename):
+        for update_file_path in sort_sources(
+            recursive_glob(source_dir, source_data_filename)
+        ):
             update_file = open(update_file_path, "r")
             update_data = json.load(update_file)
 
@@ -663,14 +725,14 @@ def update_all_sources(source_data_filename, host_filename):
         to be the same for all sources.
     host_filename : str
         The name of the file in which the updated source information
-        in stored for a particular URL. This filename is assumed to be
+        is stored for a particular URL. This filename is assumed to be
         the same for all sources.
     """
 
     # The transforms we support
     transform_methods = {"jsonarray": jsonarray}
 
-    all_sources = recursive_glob("*", source_data_filename)
+    all_sources = sort_sources(recursive_glob("*", source_data_filename))
 
     for source in all_sources:
         update_file = open(source, "r", encoding="UTF-8")
@@ -715,19 +777,23 @@ def create_initial_file():
     merge_file = tempfile.NamedTemporaryFile()
 
     # spin the sources for the base file
-    for source in recursive_glob(settings["datapath"], settings["hostfilename"]):
+    for source in sort_sources(
+        recursive_glob(settings["datapath"], settings["hostfilename"])
+    ):
 
         start = "# Start {}\n\n".format(os.path.basename(os.path.dirname(source)))
-        end = "# End {}\n\n".format(os.path.basename(os.path.dirname(source)))
+        end = "\n# End {}\n\n".format(os.path.basename(os.path.dirname(source)))
 
         with open(source, "r", encoding="UTF-8") as curFile:
             write_data(merge_file, start + curFile.read() + end)
 
     # spin the sources for extensions to the base file
     for source in settings["extensions"]:
-        for filename in recursive_glob(
-            path_join_robust(settings["extensionspath"], source),
-            settings["hostfilename"],
+        for filename in sort_sources(
+            recursive_glob(
+                path_join_robust(settings["extensionspath"], source),
+                settings["hostfilename"],
+            )
         ):
             with open(filename, "r") as curFile:
                 write_data(merge_file, curFile.read())
@@ -877,6 +943,10 @@ def remove_dups_and_excl(merge_file, exclusion_regexes, output_file=None):
         if not stripped_rule or matches_exclusions(stripped_rule, exclusion_regexes):
             continue
 
+        # Issue #1628
+        if "@" in stripped_rule:
+            continue
+
         # Normalize rule
         hostname, normalized_rule = normalize_rule(
             stripped_rule,
@@ -885,7 +955,7 @@ def remove_dups_and_excl(merge_file, exclusion_regexes, output_file=None):
         )
 
         for exclude in exclusions:
-            if re.search(r"[\s\.]" + re.escape(exclude) + r"\s", line):
+            if re.search(r"(^|[\s\.])" + re.escape(exclude) + r"\s", line):
                 write_line = False
                 break
 
@@ -922,6 +992,37 @@ def normalize_rule(rule, target_ip, keep_domain_comments):
         and spacing reformatted.
     """
 
+    def normalize_response(
+        extracted_hostname: str, extracted_suffix: Optional[str]
+    ) -> Tuple[str, str]:
+        """
+        Normalizes the responses after the provision of the extracted
+        hostname and suffix - if exist.
+
+        Parameters
+        ----------
+        extracted_hostname: str
+            The extracted hostname to work with.
+        extracted_suffix: str
+            The extracted suffix to with.
+
+        Returns
+        -------
+        normalized_response: tuple
+            A tuple of the hostname and the rule string with spelling
+            and spacing reformatted.
+        """
+
+        rule = "%s %s" % (target_ip, extracted_hostname)
+
+        if keep_domain_comments and extracted_suffix:
+            if not extracted_suffix.strip().startswith("#"):
+                rule += " #%s" % extracted_suffix
+            else:
+                rule += " %s" % extracted_suffix
+
+        return extracted_hostname, rule + "\n"
+
     """
     first try: IP followed by domain
     """
@@ -933,15 +1034,8 @@ def normalize_rule(rule, target_ip, keep_domain_comments):
 
         # Explicitly lowercase and trim the hostname.
         hostname = hostname.lower().strip()
-        rule = "%s %s" % (target_ip, hostname)
 
-        if suffix and keep_domain_comments:
-            if not suffix.strip().startswith("#"):
-                rule += " #%s" % suffix
-            else:
-                rule += " %s" % suffix
-
-        return hostname, rule + "\n"
+        return normalize_response(hostname, suffix)
 
     """
     next try: IP address followed by host IP address
@@ -953,15 +1047,22 @@ def normalize_rule(rule, target_ip, keep_domain_comments):
         ip_host, suffix = result.group(2, 3)
         # Explicitly trim the ip host.
         ip_host = ip_host.strip()
-        rule = "%s %s" % (target_ip, ip_host)
 
-        if suffix and keep_domain_comments:
-            if not suffix.strip().startswith("#"):
-                rule += " #%s" % suffix
-            else:
-                rule += " %s" % suffix
+        return normalize_response(ip_host, suffix)
 
-        return ip_host, rule + "\n"
+    """
+    next try: Keep RAW domain.
+    """
+    regex = r"^\s*([\w\.-]+[a-zA-Z])(.*)"
+    result = re.search(regex, rule)
+
+    if result:
+        hostname, suffix = result.group(1, 2)
+
+        # Explicitly lowercase and trim the hostname.
+        hostname = hostname.lower().strip()
+
+        return normalize_response(hostname, suffix)
 
     """
     finally, if we get here, just belch to screen
@@ -985,12 +1086,7 @@ def strip_rule(line):
         The sanitized rule.
     """
 
-    split_line = line.split()
-    if len(split_line) < 2:
-        # just return blank
-        return ""
-    else:
-        return " ".join(split_line)
+    return " ".join(line.split())
 
 
 def write_opening_header(final_file, **header_params):
@@ -1033,19 +1129,14 @@ def write_opening_header(final_file, **header_params):
                 ),
             )
     else:
-        write_data(
-            final_file,
-            "# Title: StevenBlack/hosts\n#\n".format(
-                ", ".join(header_params["extensions"])
-            ),
-        )
+        write_data(final_file, "# Title: StevenBlack/hosts\n#\n")
 
     write_data(
         final_file,
         "# This hosts file is a merged collection "
         "of hosts from reputable sources,\n",
     )
-    write_data(final_file, "# with a dash of crowd sourcing via Github\n#\n")
+    write_data(final_file, "# with a dash of crowd sourcing via GitHub\n#\n")
     write_data(
         final_file,
         "# Date: " + time.strftime("%d %B %Y %H:%M:%S (%Z)", time.gmtime()) + "\n",
@@ -1071,7 +1162,7 @@ def write_opening_header(final_file, **header_params):
         final_file,
         "# Fetch the latest version of this file: "
         "https://raw.githubusercontent.com/StevenBlack/hosts/master/"
-        + path_join_robust(header_params["outputsubfolder"], "")
+        + path_join_robust(header_params["outputsubfolder"], "").replace("\\", "/")
         + "hosts\n",
     )
     write_data(
@@ -1154,6 +1245,11 @@ def update_readme_data(readme_file, **readme_updates):
         readme_data = json.load(f)
         readme_data[extensions_key] = generation_data
 
+    for denomination, data in readme_data.copy().items():
+        if "location" in data and data["location"] and "\\" in data["location"]:
+            # Windows compatibility: #1166
+            readme_data[denomination]["location"] = data["location"].replace("\\", "/")
+
     with open(readme_file, "w") as f:
         json.dump(readme_data, f)
 
@@ -1186,8 +1282,8 @@ def move_hosts_file_into_place(final_file):
     elif os.name == "nt":
         print("Automatically moving the hosts file in place is not yet supported.")
         print(
-            "Please move the generated file to %SystemRoot%\system32\drivers\etc\hosts"
-        )  # noqa: W605
+            "Please move the generated file to %SystemRoot%\\system32\\drivers\\etc\\hosts"
+        )
 
 
 def flush_dns_cache():
@@ -1237,6 +1333,7 @@ def flush_dns_cache():
 
         system_prefixes = ["/usr", ""]
         service_types = ["NetworkManager", "wicd", "dnsmasq", "networking"]
+        restarted_services = []
 
         for system_prefix in system_prefixes:
             systemctl = system_prefix + "/bin/systemctl"
@@ -1244,18 +1341,26 @@ def flush_dns_cache():
 
             for service_type in service_types:
                 service = service_type + ".service"
+                if service in restarted_services:
+                    continue
+
                 service_file = path_join_robust(system_dir, service)
                 service_msg = (
                     "Flushing the DNS cache by restarting " + service + " {result}"
                 )
 
                 if os.path.isfile(service_file):
+                    if 0 != subprocess.call(
+                        [systemctl, "status", service], stdout=subprocess.DEVNULL
+                    ):
+                        continue
                     dns_cache_found = True
 
                     if subprocess.call(SUDO + [systemctl, "restart", service]):
                         print_failure(service_msg.format(result="failed"))
                     else:
                         print_success(service_msg.format(result="succeeded"))
+                    restarted_services.append(service)
 
         dns_clean_file = "/etc/init.d/dns-clean"
         dns_clean_msg = "Flushing the DNS cache via dns-clean executable {result}"
@@ -1272,7 +1377,7 @@ def flush_dns_cache():
             print_failure("Unable to determine DNS management tool.")
 
 
-def remove_old_hosts_file(backup):
+def remove_old_hosts_file(old_file_path, backup):
     """
     Remove the old hosts file.
 
@@ -1285,14 +1390,12 @@ def remove_old_hosts_file(backup):
         Whether or not to backup the existing hosts file.
     """
 
-    old_file_path = path_join_robust(BASEDIR_PATH, "hosts")
-
     # Create if already removed, so remove won't raise an error.
     open(old_file_path, "a").close()
 
     if backup:
-        backup_file_path = path_join_robust(
-            BASEDIR_PATH, "hosts-{}".format(time.strftime("%Y-%m-%d-%H-%M-%S"))
+        backup_file_path = old_file_path + "-{}".format(
+            time.strftime("%Y-%m-%d-%H-%M-%S")
         )
 
         # Make a backup copy, marking the date in which the list was updated
@@ -1309,8 +1412,8 @@ def remove_old_hosts_file(backup):
 
 def domain_to_idna(line):
     """
-    Encode a domain which is presente into a line into `idna`. This way we
-    avoid the most encoding issue.
+    Encode a domain that is present into a line into `idna`. This way we
+    avoid most encoding issues.
 
     Parameters
     ----------
@@ -1324,7 +1427,7 @@ def domain_to_idna(line):
 
     Notes
     -----
-    - This function encode only the domain to `idna` format because in
+    - This function encodes only the domain to `idna` format because in
         most cases, the encoding issue is due to a domain which looks like
         `b'\xc9\xa2oogle.com'.decode('idna')`.
     - About the splitting:
@@ -1407,33 +1510,37 @@ def maybe_copy_example_file(file_path):
             shutil.copyfile(example_file_path, file_path)
 
 
-def get_file_by_url(url):
+def get_file_by_url(url, params=None, **kwargs):
     """
-    Get a file data located at a particular URL.
+    Retrieve the contents of the hosts file at the URL, then pass it through domain_to_idna().
+
+    Parameters are passed to the requests.get() function.
 
     Parameters
     ----------
-    url : str
-        The URL at which to access the data.
+    url : str or bytes
+        URL for the new Request object.
+    params :
+        Dictionary, list of tuples or bytes to send in the query string for the Request.
+    kwargs :
+        Optional arguments that request takes.
 
     Returns
     -------
     url_data : str or None
         The data retrieved at that URL from the file. Returns None if the
         attempted retrieval is unsuccessful.
-
-    Note
-    ----
-    - BeautifulSoup is used in this case to avoid having to search in which
-        format we have to encode or decode data before parsing it to UTF-8.
     """
 
     try:
-        f = urlopen(url)
-        soup = BeautifulSoup(f.read(), "lxml").get_text()
-        return "\n".join(list(map(domain_to_idna, soup.split("\n"))))
-    except Exception:
-        print("Problem getting file: ", url)
+        req = requests.get(url=url, params=params, **kwargs)
+    except requests.exceptions.RequestException:
+        print("Error retrieving data from {}".format(url))
+        return None
+
+    req.encoding = req.apparent_encoding
+    res_text = "\n".join([domain_to_idna(line) for line in req.text.split("\n")])
+    return res_text
 
 
 def write_data(f, data):
@@ -1509,7 +1616,7 @@ def query_yes_no(question, default="yes"):
     return reply == "yes"
 
 
-def is_valid_domain_format(domain):
+def is_valid_user_provided_domain_format(domain):
     """
     Check whether a provided domain is valid.
 
